@@ -14,9 +14,7 @@ from syft.workers.websocket_server import WebsocketServerWorker
 import websockets
 from syft.messaging.message import ObjectRequestMessage
 
-
 TIMEOUT_INTERVAL = 30
-
 
 def model_to_device(model, device='cpu'):
     new_model = ConvNet1D(input_size=400, num_classes=7).to(device)

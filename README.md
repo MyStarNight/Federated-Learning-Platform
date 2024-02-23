@@ -56,6 +56,7 @@ graph LR
 
 A[Jetson Nano: Controller&Server] --> B[Jetson Nano: Client1]
 A --> C[Raspberry Pi: Client2]
+A --> D[Ubuntu Laptop: Testing]
 ```
 
 - Controller: 选择一个Jetson Nano 作为Controller，用来连接参与训练的客户端。
