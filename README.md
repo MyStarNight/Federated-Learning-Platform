@@ -8,7 +8,7 @@
 
 项目内容为使用10个Raspi进行Federated Learning训练。
 
-在此之后，项目组又获得了8快Jetson Nano，因此打算重新构建完整的**Federated Learning Platform**。
+在此之后，项目组又获得了8块Jetson Nano，因此打算重新构建完整的**Federated Learning Platform**。
 
 # Direction 
 
