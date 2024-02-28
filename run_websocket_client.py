@@ -2,6 +2,8 @@ import logging
 import argparse
 import sys
 import asyncio
+import traceback
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -71,7 +73,7 @@ async def fit_model_on_worker(
     curr_round: int,
     max_nr_batches: int,
     lr: float,
-    device: str
+    # device: str
 ):
     """Send the model to the worker and fit the model on the worker's training data.
 
@@ -82,7 +84,7 @@ async def fit_model_on_worker(
         curr_round: Index of the current training round (for logging purposes).
         max_nr_batches: If > 0, training on worker will stop at min(max_nr_batches, nr_available_batches).
         lr: Learning rate of each training step.
-        device:
+
 
     Returns:
         A tuple containing:
@@ -93,12 +95,12 @@ async def fit_model_on_worker(
     # print("The Training Round: ", curr_round)
     try:
         start_time = datetime.now()
-        print(f"User-{worker.id} Training start time: {start_time}")
+        print(f"User-{worker.id} Federated Learning start time: {start_time}")
 
-        model_send = model_to_device(traced_model, device)
+        # model_send = model_to_device(traced_model, device)
 
         train_config = sy.TrainConfig(
-            model=model_send,
+            model=traced_model,
             loss_fn=loss_fn,
             batch_size=batch_size,
             shuffle=True,
@@ -109,19 +111,21 @@ async def fit_model_on_worker(
         )
         train_config.send(worker)
         # 远程训练模型；等待远程训练模型的完成
-        loss = await worker.async_fit_on_device(dataset_key="HAR", return_ids=[0], device=device)
+        loss = await worker.async_fit_on_device(dataset_key="HAR", return_ids=[0])
         model = train_config.model_ptr.get().obj
         # print(type(model))
 
         end_time = datetime.now()
-        print(f"User-{worker.id} Training end time: {end_time}")
+        print(f"User-{worker.id} Federated Learning end time: {end_time}")
         consuming_time = end_time - start_time
 
         return worker.id, model, loss, consuming_time.total_seconds()
 
     except Exception as e:
         print(f"User-{worker.id} {datetime.now()} Inaccessible: {e}")
+        traceback.print_exc()
         return worker.id, None, None, None
+
 
 def evaluate_model_on_worker(
     model_identifier,
@@ -173,7 +177,8 @@ def evaluate_model_on_worker(
 
     return test_loss, accuracy
 
-def visualization(input_df:pd.DataFrame, title, ylabel, log_path):
+
+def visualization(input_df:pd.DataFrame, title, y_label, log_path):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
     for column in input_df.columns:
@@ -181,7 +186,7 @@ def visualization(input_df:pd.DataFrame, title, ylabel, log_path):
         plt.plot(input_df.index, input_df[column], label=column, color='red', linewidth=2, alpha=0.7, marker='o')
 
         plt.xlabel('Training Round')
-        plt.ylabel(ylabel)
+        plt.ylabel(y_label)
         plt.title(f'{column}_{title}')
         plt.savefig(f'{log_path}/{column}_accuracy.png')
         plt.show()
@@ -203,7 +208,6 @@ async def main():
     worker_a = MyWebsocketClientWorker(id='A', port=9292, **jetson_nano)
     worker_b = MyWebsocketClientWorker(id='B', port=9292, **raspi)
     worker_instances = [worker_a, worker_b]
-    client_devices = ['cuda', 'cpu']
 
     kwargs_websocket = {"host": "192.168.3.17", "hook": hook, "verbose": args.verbose}
     testing = MyWebsocketClientWorker(id="testing", port=9292, **kwargs_websocket)
@@ -213,12 +217,8 @@ async def main():
     for wcw in all_nodes:
         wcw.clear_objects_remote()
 
-    # use_cuda = args.cuda and torch.cuda.is_available()
-    # torch.manual_seed(args.seed)
-    # device = torch.device("cuda" if use_cuda else "cpu")
-
-    # Jetson Nano : Use Cuda
-    device = torch.device('cuda')
+    # Ubuntu Laptop: use cpu
+    device = torch.device('cpu')
 
     if args.stage == 1:
         model = ConvNet1D(input_size=400, num_classes=7).to(device)
@@ -236,6 +236,7 @@ async def main():
     time_list = []
     test_num = 5
 
+    # 开始训练
     for curr_round in range(1, args.training_rounds + 1):
         logger.info("Training round %s/%s", curr_round, args.training_rounds)
 
@@ -248,9 +249,8 @@ async def main():
                     curr_round=curr_round,
                     max_nr_batches=args.federate_after_n_batches,
                     lr=learning_rate,
-                    device=client_device
                 )
-                for worker, client_device in zip(worker_instances, client_devices)
+                for worker in worker_instances
             ]
         )
         models = {}
@@ -288,7 +288,7 @@ async def main():
         # Federate models (note that this will also change the model in models[0]
         for worker_id, worker_model, worker_loss, worker_time in results:
             if worker_model is not None:
-                models[worker_id] = model_to_device(worker_model, 'cuda')
+                models[worker_id] = model_to_device(worker_model, 'cpu')
                 loss_values[worker_id] = worker_loss
                 time_consuming[worker_id] = worker_time
 
@@ -353,7 +353,7 @@ async def main():
     raspi_accuracy = pd.DataFrame(client_accuracy_list, index=[i * test_num for i in range(len(accuracy_list))])
     raspi_accuracy.to_csv(f'{log_path}/raspi_accuracy.csv')
 
-    visualization(raspi_accuracy, title='Accuracy Curve', ylabel='Accuracy', log_path=log_path + '/raspi_pic')
+    visualization(raspi_accuracy, title='Accuracy Curve', y_label='Accuracy', log_path=log_path + '/raspi_pic')
 
 if __name__ == "__main__":
     # Logging setup
