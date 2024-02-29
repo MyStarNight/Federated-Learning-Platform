@@ -17,6 +17,8 @@ import syft as sy
 from syft.workers import websocket_client
 from syft.workers.websocket_client import WebsocketClientWorker
 from syft.frameworks.torch.fl import utils
+
+import my_utils
 from my_utils import MyWebsocketClientWorker, model_to_device, ConvNet1D
 
 LOG_INTERVAL = 25
@@ -97,8 +99,6 @@ async def fit_model_on_worker(
         start_time = datetime.now()
         print(f"User-{worker.id} Federated Learning start time: {start_time}")
 
-        # model_send = model_to_device(traced_model, device)
-
         train_config = sy.TrainConfig(
             model=traced_model,
             loss_fn=loss_fn,
@@ -176,6 +176,42 @@ def evaluate_model_on_worker(
     accuracy = correct / len_dataset
 
     return test_loss, accuracy
+
+
+def aggregate(
+        model_dict: dict,
+        worker: MyWebsocketClientWorker
+):
+    federated_model = ConvNet1D(input_size=400, num_classes=7)
+    traced_model = torch.jit.trace(federated_model, torch.zeros([1, 400, 3], dtype=torch.float))
+
+    aggregate_config = my_utils.AggregatedConfig(
+        model_dict=model_dict,
+        federated_model=traced_model
+    )
+
+    # 发送模型到聚合点
+    aggregate_config.send_model(worker)
+
+    # 发送训练模型的id给client
+    aggregate_config_dict = aggregate_config.simplify(aggregate_config.owner, aggregate_config)
+    print(aggregate_config_dict)
+    ptr, ID = aggregate_config._wrap_and_send_obj(aggregate_config_dict, worker)
+
+    # 在远程对变量进行赋值
+    worker._send_msg_and_deserialize("set_aggregate_config", ID=ID)
+
+    # 检查是否发送到设备端
+    worker._send_msg_and_deserialize("_check_aggregate_config")
+
+    # 发送命令让模型开始聚合
+    worker._send_msg_and_deserialize("model_aggregation")
+
+    # 收回模型
+    model = aggregate_config.get(aggregate_config_dict['federated_model_id'], worker).obj
+    new_model = model_to_device(model, 'cpu')
+
+    return new_model
 
 
 def visualization(input_df:pd.DataFrame, title, y_label, log_path):
@@ -294,7 +330,10 @@ async def main():
 
         time_list.append(time_consuming)
 
-        traced_model = utils.federated_avg(models)
+        worker_aggregated = worker_instances[(curr_round+1)%2]
+        print(f"Model Aggregation on device: {worker_aggregated.id}")
+        traced_model = aggregate(models, worker_aggregated)
+
         if curr_round == args.training_rounds:
             torch.save(traced_model.state_dict(), f"model/HAR_{stage}.pt")
 

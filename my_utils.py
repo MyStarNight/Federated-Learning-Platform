@@ -6,11 +6,15 @@ import torch
 import torch.nn as nn
 
 import syft as sy
+from syft.generic.pointers.object_wrapper import ObjectWrapper
+from syft.workers.abstract import AbstractWorker
+from syft.frameworks.torch.fl import utils
 from syft.workers.base import BaseWorker
 import weakref
 import torch
 from syft.workers.websocket_client import WebsocketClientWorker
 from syft.workers.websocket_server import WebsocketServerWorker
+
 import websockets
 from syft.messaging.message import ObjectRequestMessage
 from datetime import datetime
@@ -33,6 +37,7 @@ def model_to_device(model, device='cpu'):
     new_model.load_state_dict(model.state_dict())
     traced_model = torch.jit.trace(new_model, torch.zeros([1, 400, 3], dtype=torch.float).to(device))
     return traced_model
+
 
 class ConvNet1D(nn.Module):
     def __init__(self, input_size, num_classes):
@@ -86,8 +91,24 @@ class MyWebsocketClientWorker(WebsocketClientWorker):
         # Return the deserialized response.
         return sy.serde.deserialize(response)
 
+    def aggregate(self, return_ids: List[int] = None):
+        return self._send_msg_and_deserialize('model_aggregation')
+
 
 class MyWebsocketServerWorker(WebsocketServerWorker):
+    def __init__(self, hook, host: str, port: int, id, verbose):
+        super().__init__(hook=hook, host=host, port=port, id=id, verbose=verbose)
+        self.aggregate_config = None
+
+    def set_aggregate_config(self, ID: int):
+        self.aggregate_config = self.get_obj(ID).obj
+        # print(self.aggregate_config)
+
+    def _check_aggregate_config(self):
+        if self.aggregate_config is None:
+            raise ValueError("Operation needs Aggregate object to be set.")
+        print("Aggregate object is Okay.")
+
     def fit_on_device(self, dataset_key: str, **kwargs):
         """
         此函数可以让设备在接受到模型以后，若有cuda，可以自动调整到cuda进行运算
@@ -158,3 +179,105 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
         traced_model.load_state_dict(new_model.state_dict())
 
         return loss.to('cpu')
+
+    def model_aggregation(self, **kwargs):
+        # 聚合开始时间
+        start_time = datetime.now()
+        print(f"Aggregating start time: {start_time}")
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f'{device} is available.')
+
+        model_dict = {}
+        for i, _model_id in enumerate(self.aggregate_config['model_id_list'][1]):
+            worker_model = self.get_obj(_model_id).obj
+            worker_model_to_local = model_to_device(worker_model, device)
+            model_dict[i] = worker_model_to_local
+
+        federated_model = utils.federated_avg(model_dict)
+        model = model_to_device(federated_model, 'cpu')
+
+        traced_model = self.get_obj(self.aggregate_config['federated_model_id']).obj
+        traced_model.load_state_dict(model.state_dict())
+
+        # 聚合结束时间
+        end_time = datetime.now()
+        print(f"Aggregating end time: {end_time}")
+        print(f"Time Consuming: {(end_time-start_time).total_seconds()}\n")
+
+        return
+
+
+class AggregatedConfig():
+    def __init__(self,
+                 model_dict,
+                 federated_model,
+                 owner: AbstractWorker = None,
+                 ID =  None,
+                 model_id_list = [],
+                 federated_model_id = None
+                 ):
+        self.models = model_dict
+        self.model_ptr_list = []
+        self._model_id_list = model_id_list
+
+        self.federated_model = federated_model
+        self.federated_model_ptr = None
+        self._federated_model_id = federated_model_id
+
+        self.owner = owner if owner else sy.hook.local_worker
+        self.id = ID if ID is not None else sy.ID_PROVIDER.pop()
+
+    def _wrap_and_send_obj(self, obj, location):
+        """Wrappers object and send it to location."""
+        obj_with_id = ObjectWrapper(id=sy.ID_PROVIDER.pop(), obj=obj)
+        obj_ptr = self.owner.send(obj_with_id, location)
+        obj_id = obj_ptr.id_at_location
+        return obj_ptr, obj_id
+
+    def send_model(self, location: BaseWorker) -> weakref:
+        self.model_ptr_list = []
+        self._model_id_list = []
+        # 发送需要聚合的模型
+        for model in self.models.values():
+            model_ptr, _model_id = self._wrap_and_send_obj(model, location)
+            self.model_ptr_list.append(model_ptr)
+            self._model_id_list.append(_model_id)
+
+        # 发送一个聚合模型
+        self.federated_model_ptr, self._federated_model_id = self._wrap_and_send_obj(self.federated_model, location)
+
+    def get(self, ID, location):
+        for model_id in self._model_id_list:
+            self.owner.request_obj(model_id, location)
+        return self.owner.request_obj(ID, location)
+
+    @staticmethod
+    def simplify(worker: BaseWorker, aggregate_config: "AggregatedConfig") -> dict:
+        # 示例：仅简化ID和模型ID列表，实际应用中可能需要更复杂的逻辑
+        return {
+            'ID': sy.serde.msgpack.serde._simplify(worker, aggregate_config.id),
+            'model_id_list': sy.serde.msgpack.serde._simplify(worker, aggregate_config._model_id_list),
+            'federated_model_id': sy.serde.msgpack.serde._simplify(worker, aggregate_config._federated_model_id),
+        }
+
+    @staticmethod
+    def detail(worker: BaseWorker, aggregate_config_tuple: tuple) -> "AggregatedConfig":
+        # 从元组中恢复ID和模型ID列表
+        id, model_id_list, federated_model_id = aggregate_config_tuple
+
+        id = sy.serde.msgpack.serde._detail(worker, id)
+        model_id_list = sy.serde.msgpack.serde._detail(worker, model_id_list)
+        federated_model_id = sy.serde.msgpack.serde._detail(worker, federated_model_id)
+
+        # 创建AggregatedConfig实例，可能需要额外的逻辑来处理model_dict和federated_model
+        aggregate_config = AggregatedConfig(
+            model_dict=None,  # 需要特定逻辑来处理
+            federated_model=None,  # 需要特定逻辑来处理
+            owner=worker,
+            ID=id,
+            model_id_list=model_id_list,
+            federated_model_id=federated_model_id
+        )
+
+        return aggregate_config
