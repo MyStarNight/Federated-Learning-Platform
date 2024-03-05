@@ -34,8 +34,8 @@ def loss_fn_test(pred, target):
     return F.cross_entropy(pred, target)
 
 
-
-def define_and_get_arguments(args=sys.argv[1:]): # 选定参数
+def define_and_get_arguments(args=sys.argv[1:]):
+    # 选定参数
     parser = argparse.ArgumentParser(
         description="Run federated learning using websocket client workers."
     )
@@ -53,9 +53,7 @@ def define_and_get_arguments(args=sys.argv[1:]): # 选定参数
         help="number of training steps performed on each remote worker before averaging",
     )
     parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
-    parser.add_argument("--cuda", action="store_true", help="use cuda")
     parser.add_argument("--seed", type=int, default=12345, help="seed used for randomization")
-    # parser.add_argument("--save_model", action="store_true", help="if set, model will be saved")
     parser.add_argument(
         "--verbose",
         "-v",
@@ -75,6 +73,7 @@ async def fit_model_on_worker(
     curr_round: int,
     max_nr_batches: int,
     lr: float,
+    dataset_key :str,
     # device: str
 ):
     """Send the model to the worker and fit the model on the worker's training data.
@@ -111,7 +110,7 @@ async def fit_model_on_worker(
         )
         train_config.send(worker)
         # 远程训练模型；等待远程训练模型的完成
-        loss = await worker.async_fit_on_device(dataset_key="HAR", return_ids=[0])
+        loss = await worker.async_fit_on_device(dataset_key=dataset_key, return_ids=[0])
         model = train_config.model_ptr.get().obj
         # print(type(model))
 
@@ -123,7 +122,7 @@ async def fit_model_on_worker(
 
     except Exception as e:
         print(f"User-{worker.id} {datetime.now()} Inaccessible: {e}")
-        traceback.print_exc()
+        # traceback.print_exc()
         return worker.id, None, None, None
 
 
@@ -182,36 +181,41 @@ def aggregate(
         model_dict: dict,
         worker: MyWebsocketClientWorker
 ):
-    federated_model = ConvNet1D(input_size=400, num_classes=7)
-    traced_model = torch.jit.trace(federated_model, torch.zeros([1, 400, 3], dtype=torch.float))
+    try:
+        federated_model = ConvNet1D(input_size=400, num_classes=7)
+        traced_model = torch.jit.trace(federated_model, torch.zeros([1, 400, 3], dtype=torch.float))
 
-    aggregate_config = my_utils.AggregatedConfig(
-        model_dict=model_dict,
-        federated_model=traced_model
-    )
+        aggregate_config = my_utils.AggregatedConfig(
+            model_dict=model_dict,
+            federated_model=traced_model
+        )
 
-    # 发送模型到聚合点
-    aggregate_config.send_model(worker)
+        # 发送模型到聚合点
+        aggregate_config.send_model(worker)
 
-    # 发送训练模型的id给client
-    aggregate_config_dict = aggregate_config.simplify(aggregate_config.owner, aggregate_config)
-    print(aggregate_config_dict)
-    ptr, ID = aggregate_config._wrap_and_send_obj(aggregate_config_dict, worker)
+        # 发送训练模型的id给client
+        aggregate_config_dict = aggregate_config.simplify(aggregate_config.owner, aggregate_config)
+        print(aggregate_config_dict)
+        ptr, ID = aggregate_config._wrap_and_send_obj(aggregate_config_dict, worker)
 
-    # 在远程对变量进行赋值
-    worker._send_msg_and_deserialize("set_aggregate_config", ID=ID)
+        # 在远程对变量进行赋值
+        worker._send_msg_and_deserialize("set_aggregate_config", ID=ID)
 
-    # 检查是否发送到设备端
-    worker._send_msg_and_deserialize("_check_aggregate_config")
+        # 检查是否发送到设备端
+        worker._send_msg_and_deserialize("_check_aggregate_config")
 
-    # 发送命令让模型开始聚合
-    worker._send_msg_and_deserialize("model_aggregation")
+        # 发送命令让模型开始聚合
+        worker._send_msg_and_deserialize("model_aggregation")
 
-    # 收回模型
-    model = aggregate_config.get(aggregate_config_dict['federated_model_id'], worker).obj
-    new_model = model_to_device(model, 'cpu')
+        # 收回模型
+        model = aggregate_config.get(aggregate_config_dict['federated_model_id'], worker).obj
+        new_model = model_to_device(model, 'cpu')
 
-    return new_model
+        return new_model
+
+    except Exception as e:
+        print(f"User-{worker.id} Aggregation Failed. Reason: {e}")
+        return None
 
 
 def visualization(input_df:pd.DataFrame, title, y_label, log_path):
@@ -231,27 +235,26 @@ def visualization(input_df:pd.DataFrame, title, y_label, log_path):
 async def main():
     args = define_and_get_arguments()
     stage = 'stage' + str(args.stage)
+    dataset_key = 'HAR-' + str(args.stage)
 
     hook = sy.TorchHook(torch)
+
+    # 连接所有节点
+    client_device_mapping_id = my_utils.client_device_mapping_id
+    all_nodes = []
+    for ip, ID in client_device_mapping_id.items():
+        kwargs_websocket = {"hook": hook, "host": ip, "port": 9292, "id": ID}
+        all_nodes.append(MyWebsocketClientWorker(**kwargs_websocket))
+    worker_instances = all_nodes[:-1]
+    testing = all_nodes[-1]
+
+    for wcw in all_nodes:
+        wcw.clear_objects_remote()
+
     loss_list = []
     accuracy_list = []
     client_loss_list = []
     client_accuracy_list = []
-
-    raspi = {"host": "192.168.3.4", "hook": hook}
-    jetson_nano = {"host": "192.168.3.5", "hook": hook}
-
-    worker_a = MyWebsocketClientWorker(id='A', port=9292, **jetson_nano)
-    worker_b = MyWebsocketClientWorker(id='B', port=9292, **raspi)
-    worker_instances = [worker_a, worker_b]
-
-    kwargs_websocket = {"host": "192.168.3.17", "hook": hook, "verbose": args.verbose}
-    testing = MyWebsocketClientWorker(id="testing", port=9292, **kwargs_websocket)
-
-    all_nodes = worker_instances + [testing]
-
-    for wcw in all_nodes:
-        wcw.clear_objects_remote()
 
     # Ubuntu Laptop: use cpu
     device = torch.device('cpu')
@@ -272,6 +275,9 @@ async def main():
     time_list = []
     test_num = 5
 
+    aggregate_policy = my_utils.AggregationPolicies([i for i in range(len(worker_instances))])
+    aggregate_worker_num = aggregate_policy.reset()
+
     # 开始训练
     for curr_round in range(1, args.training_rounds + 1):
         logger.info("Training round %s/%s", curr_round, args.training_rounds)
@@ -285,6 +291,7 @@ async def main():
                     curr_round=curr_round,
                     max_nr_batches=args.federate_after_n_batches,
                     lr=learning_rate,
+                    dataset_key=dataset_key
                 )
                 for worker in worker_instances
             ]
@@ -305,7 +312,7 @@ async def main():
                     loss, accuracy = evaluate_model_on_worker(
                         model_identifier="Model update " + worker_id,
                         worker=testing,
-                        dataset_key="HAR_testing",
+                        dataset_key="HAR-testing",
                         model=model_to_device(worker_model, 'cpu'),
                         nr_bins=7,
                         batch_size=32,
@@ -330,9 +337,18 @@ async def main():
 
         time_list.append(time_consuming)
 
-        worker_aggregated = worker_instances[(curr_round+1)%2]
-        print(f"Model Aggregation on device: {worker_aggregated.id}")
-        traced_model = aggregate(models, worker_aggregated)
+        # 模型聚合
+        while True:
+            # print(aggregate_worker_num)
+            aggregate_worker = worker_instances[aggregate_worker_num]
+            print(f"Model Aggregation on device: {aggregate_worker.id}")
+            traced_model = aggregate(models, aggregate_worker)
+            if traced_model is not None:
+                aggregate_worker_num = aggregate_policy.aggregate_in_order()
+                break
+            else:
+                aggregate_policy.delete_inaccessible_worker(aggregate_worker_num)
+                aggregate_worker_num = aggregate_policy.aggregate_in_order()
 
         if curr_round == args.training_rounds:
             torch.save(traced_model.state_dict(), f"model/HAR_{stage}.pt")
@@ -341,7 +357,7 @@ async def main():
             loss, accuracy = evaluate_model_on_worker(
                 model_identifier="Federated model",
                 worker=testing,
-                dataset_key="HAR_testing",
+                dataset_key="HAR-testing",
                 model=model_to_device(traced_model, 'cpu'),
                 nr_bins=7,
                 batch_size=128,

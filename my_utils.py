@@ -21,6 +21,25 @@ from datetime import datetime
 
 TIMEOUT_INTERVAL = 30
 
+client_device_mapping_id = {
+    "192.168.3.2": "A",
+    "192.168.3.3": "B",
+    "192.168.3.4": "C",
+    "192.168.3.7": "D",
+    "192.168.3.8": "E",
+    "192.168.3.10": "F",
+    "192.168.3.11": "G",
+    "192.168.3.12": "H",
+    "192.168.3.13": "I",
+    "192.168.3.20": "J",
+    "192.168.3.5": "AA",
+    "192.168.3.6": "BB",
+    "192.168.3.9": "CC",
+    "192.168.3.15": "DD",
+    "192.168.3.16": "EE",
+    "192.168.3.17": "testing"
+}
+
 
 def model_to_device(model, device='cpu'):
     """由于在此环境下，模型进行计算以后无法在cpu和cuda之间切换
@@ -39,12 +58,35 @@ def model_to_device(model, device='cpu'):
     return traced_model
 
 
+class AggregationPolicies:
+    def __init__(self, aggregate_list: list):
+        self.aggregate_worker_index = None
+        self.aggregate_worker_num_list = aggregate_list
+        self.length = len(aggregate_list)
+
+    def reset(self):
+        self.aggregate_worker_index = 0
+        return self.aggregate_worker_index
+
+    def delete_inaccessible_worker(self, worker_num):
+        self.aggregate_worker_num_list[worker_num] = None
+
+    def aggregate_in_order(self):
+        while True:
+            worker_num = self.aggregate_worker_num_list[self.aggregate_worker_index % self.length]
+            self.aggregate_worker_index += 1
+            if worker_num is not None:
+                break
+        return worker_num
+
+
+
 class ConvNet1D(nn.Module):
     def __init__(self, input_size, num_classes):
         super(ConvNet1D, self).__init__()
         self.conv1 = nn.Conv1d(in_channels=3, out_channels=64, kernel_size=3)
         self.pool = nn.MaxPool1d(kernel_size=2)
-        self.fc1 = nn.Linear(64 * ((input_size-3+1)//2), 128)
+        self.fc1 = nn.Linear(64 * ((input_size - 3 + 1) // 2), 128)
         self.fc2 = nn.Linear(128, num_classes)
 
     def forward(self, x):
@@ -69,7 +111,7 @@ class MyWebsocketClientWorker(WebsocketClientWorker):
         # This code is not tested with secure connections (wss protocol).
         self.close()
         async with websockets.connect(
-            self.url, timeout=TIMEOUT_INTERVAL, max_size=None, ping_timeout=TIMEOUT_INTERVAL
+                self.url, timeout=TIMEOUT_INTERVAL, max_size=None, ping_timeout=TIMEOUT_INTERVAL
         ) as websocket:
             message = self.create_worker_command_message(
                 command_name="fit_on_device", return_ids=return_ids, dataset_key=dataset_key
@@ -137,7 +179,8 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
             self.train_config.optimizer, model, optimizer_args=self.train_config.optimizer_args
         )
 
-        return self._fit_on_device(model=model, traced_model=traced_model, dataset_key=dataset_key, loss_fn=loss_fn, device =device)
+        return self._fit_on_device(model=model, traced_model=traced_model, dataset_key=dataset_key, loss_fn=loss_fn,
+                                   device=device)
 
     def _fit_on_device(self, model, traced_model, dataset_key, loss_fn, device):
         # 训练开始时间
@@ -172,7 +215,7 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
         # 训练结束时间和消耗的时间
         end_time = datetime.now()
         print(f"Training end time: {end_time}")
-        print(f"Time Consuming: {(end_time-start_time).total_seconds()}\n")
+        print(f"Time Consuming: {(end_time - start_time).total_seconds()}\n")
 
         # 将训练好的参数加载到traced_model上
         new_model = model_to_device(model, 'cpu')
@@ -203,7 +246,7 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
         # 聚合结束时间
         end_time = datetime.now()
         print(f"Aggregating end time: {end_time}")
-        print(f"Time Consuming: {(end_time-start_time).total_seconds()}\n")
+        print(f"Time Consuming: {(end_time - start_time).total_seconds()}\n")
 
         return
 
@@ -213,9 +256,9 @@ class AggregatedConfig():
                  model_dict,
                  federated_model,
                  owner: AbstractWorker = None,
-                 ID =  None,
-                 model_id_list = [],
-                 federated_model_id = None
+                 ID=None,
+                 model_id_list=[],
+                 federated_model_id=None
                  ):
         self.models = model_dict
         self.model_ptr_list = []

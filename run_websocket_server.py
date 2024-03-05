@@ -10,20 +10,29 @@ import pickle
 import syft as sy
 from syft.workers import websocket_server
 from collections import Counter
+
+import my_utils
 from my_utils import MyWebsocketServerWorker
 import socket
 
+client_device_mapping_id = my_utils.client_device_mapping_id
+
 KEEP_LABELS_DICT = {
-    "A": [1, 11],
-    "B": [2, 12],
-    "C": [3, 13],
-    "D": [4, 14],
-    "E": [5, 15],
-    "F": [6, 16],
-    "G": [7, 17],
-    "H": [8, 18],
-    "I": [9, 19],
-    "J": [10, 20],
+    "A": [1],
+    "B": [2],
+    "C": [3],
+    "D": [4],
+    "E": [5],
+    "F": [6],
+    "G": [7],
+    "H": [8],
+    "I": [9],
+    "J": [10],
+    "AA": [11, 12],
+    "BB": [13, 14],
+    "CC": [15, 16],
+    "DD": [17, 18],
+    "EE": [19, 20],
     "testing": [21, 22, 23, 24],
     None: [21, 22, 23, 24],
 }
@@ -43,21 +52,20 @@ def get_host_ip():
     return ip
 
 
-def start_websocket_server_worker(id, host, port, hook, verbose, stage, keep_users=None, training=True):
+def start_websocket_server_worker(id, host, port, hook, verbose, n_samples, keep_users=None, training=True,):
     """Helper function for spinning up a websocket server and setting up the local datasets."""
 
     server = MyWebsocketServerWorker(
         id=id, host=host, port=port, hook=hook, verbose=verbose
     )
 
+    logger.info(f"Federated Worker ID: {id}, IP: {ip}, port: {port}", )
     logger.info(f"selected user: {keep_users}")
 
     # 加载数据集
     data_path = '../Dataset/HAR/shuffled_HAR_datasets.pkl'
     with open(data_path, 'rb') as f:
         HAR_datasets = pickle.load(f)
-
-    stage_str = 'stage' + str(stage)
 
     if training:
         selected_data = []
@@ -66,19 +74,29 @@ def start_websocket_server_worker(id, host, port, hook, verbose, stage, keep_use
             selected_data.append(HAR_datasets[user].tensors[0])
             selected_target.append(HAR_datasets[user].tensors[-1])
 
-        n_samples = 80
-        index_start = 80*(stage-1)
-        index_end = 80*(stage-1) + n_samples
-        selected_data_tensor = torch.cat(selected_data, dim=0)[index_start: index_end]
-        selected_target_tensor = torch.cat(selected_target, dim=0)[index_start: index_end]
+        # 将选择的数据集dict形式转换为tensor形式储存
+        selected_data = torch.cat(selected_data, dim=0)
+        selected_target = torch.cat(selected_target, dim=0)
 
-        dataset = sy.BaseDataset(
-            data=selected_data_tensor,
-            targets=selected_target_tensor
-        )
+        # 计算stage的次数
+        length = len(selected_data)
+        n_train_stages = length//n_samples + 1
 
-        print(Counter(selected_target_tensor.argmax(dim=1).numpy()))
-        key = "HAR"
+        # 建立不同stage的数据集
+        for stage in range(1, n_train_stages+1):
+            start_index = n_samples * (stage - 1)
+            end_index = n_samples * stage
+            selected_data_tensor = selected_data[start_index: end_index]
+            selected_target_tensor = selected_target[start_index: end_index]
+
+            dataset = sy.BaseDataset(
+                data=selected_data_tensor,
+                targets=selected_target_tensor
+            )
+
+            print(f"stage{stage}: {Counter(selected_target_tensor.argmax(dim=1).numpy())}, num of samples: {len(selected_target_tensor)}")
+            key = "HAR-" + str(stage)
+            server.add_dataset(dataset, key)
 
     else:
         selected_data = []
@@ -96,12 +114,12 @@ def start_websocket_server_worker(id, host, port, hook, verbose, stage, keep_use
         )
 
         print(Counter(selected_target_tensor.argmax(dim=1).numpy()))
-        key = "HAR_testing"
+        key = "HAR-testing"
 
-    server.add_dataset(dataset, key)
-    logger.info(f"selected datasets shape:{selected_data_tensor.shape} ")
+        server.add_dataset(dataset, key)
+        logger.info(f"selected datasets shape:{selected_data_tensor.shape} ")
 
-    # logger.info(f"datasets: f{server.datasets}")
+    logger.info(f"datasets: f{server.datasets.keys()}")
 
     server.start()
     return server
@@ -114,20 +132,19 @@ if __name__ == '__main__':
     logger.setLevel(level=logging.DEBUG)
 
     ip = get_host_ip()
+    worker_id = client_device_mapping_id[ip]
 
     # Parse args
+    # port, host ,testing, verbose
     parser = argparse.ArgumentParser(description="Run websocket server worker.")
     parser.add_argument(
         "--port",
         "-p",
         type=int,
         default=9292,
-        help="port number of the websocket server worker, e.g. --port 8777",
+        help="port number of the websocket server worker, e.g. --port 9292",
     )
     parser.add_argument("--host", type=str, default=ip, help="host for the connection")
-    parser.add_argument(
-        "--id", type=str, help="name (id) of the websocket server worker, e.g. --id alice"
-    )
     parser.add_argument(
         "--testing",
         action="store_true",
@@ -139,26 +156,23 @@ if __name__ == '__main__':
         action="store_true",
         help="if set, websocket server worker will be started in verbose mode",
     )
-    # parser.add_argument(
-    #     "--stage",
-    #     "-t",
-    #     type=int,
-    #     help="the stage of continual learning."
-    # )
+    parser.add_argument(
+        "--n_samples",
+        "-n",
+        default=80,
+        help="num of samples for one stage training"
+    )
 
     args = parser.parse_args()
-
-    stage = int(input("Please select a stage for training:"))
-
     hook = sy.TorchHook(torch)
+
     server = start_websocket_server_worker(
-        id=args.id,
+        id=worker_id,
         host=args.host,
         port=args.port,
         hook=hook,
         verbose=args.verbose,
-        stage=stage,
-        keep_users=KEEP_LABELS_DICT[args.id],
+        n_samples=args.n_samples,
+        keep_users=KEEP_LABELS_DICT[worker_id],
         training=not args.testing,
     )
-

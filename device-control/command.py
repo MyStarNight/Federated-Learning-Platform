@@ -90,18 +90,18 @@ if __name__ == '__main__':
         {"ip": "192.168.3.20", "username": "pi", "password": "raspberry"},
     ]
 
-    Jetson_Nano = [
+    jetson_nanos = [
         {"ip": "192.168.3.5", "username": "hao", "password": "929910"},
         {"ip": "192.168.3.6", "username": "hao", "password": "929910"},
         {"ip": "192.168.3.9", "username": "hao", "password": "929910"},
         {"ip": "192.168.3.15", "username": "hao", "password": "929910"},
         {"ip": "192.168.3.16", "username": "hao", "password": "929910"},
-        {"ip": "192.168.3.22", "username": "hao", "password": "929910"},
-        {"ip": "192.168.3.23", "username": "hao", "password": "929910"},
+        # {"ip": "192.168.3.22", "username": "hao", "password": "929910"},
+        # {"ip": "192.168.3.23", "username": "hao", "password": "929910"},
     ]
 
     ubuntu = [
-        {"ip": "192.168.1.140", "username": "hao", "password": "929910"}
+        {"ip": "192.168.3.17", "username": "hao", "password": "929910"}
     ]
 
     operation_dict = {
@@ -113,24 +113,24 @@ if __name__ == '__main__':
 
     if operation == 'send_folder':
         # 要发送目标文件夹
-        local_folder = r"E:\2023mem\Python-PJ\fl-experiment\data"
-        remote_folder = "/home/pi/work/fl-pj/v2.0/data"
+        local_folder = r"E:\2024mem\AI-project\Dataset\HAR"
+        remote_folder = "/home/hao/work/fl-pj/Dataset/HAR"
 
         # 发送文件夹
-        send_folder(raspberries, local_folder, remote_folder)
+        send_folder(jetson_nanos, local_folder, remote_folder)
 
     elif operation == 'send_file':
         # 要发送的目标文件
-        local_file = r"E:\2023mem\Python-PJ\fl-experiment\run_websocket_server.py"
-        remote_folder = "/home/pi/work/fl-pj/v2.0"
+        local_file = r"E:\2024mem\AI-project\Federated-Learning-Platform\my_utils.py"
+        remote_folder = "/home/hao/work/fl-pj/federated-learning-platform"
 
         # 发送文件
-        send_file(raspberries, local_file, remote_folder)
+        send_file(jetson_nanos, local_file, remote_folder)
 
     elif operation == 'command':
         # 执行命令
         commands_to_execute = [
-            f"sudo screen -S test;conda activate fl;cd work/fl-pj/fl-experiment/;python run_websocket_client.py --training_rounds 5 --stage 1",
+            f"mkdir /home/hao/work/fl-pj/federated-learning-platform",
         ]
-        for raspi in ubuntu:
-            command(raspi, commands_to_execute)
+        for device in jetson_nanos:
+            command(device, commands_to_execute)
