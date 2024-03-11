@@ -73,7 +73,8 @@ async def fit_model_on_worker(
     curr_round: int,
     max_nr_batches: int,
     lr: float,
-    dataset_key :str,
+    dataset_key: str,
+    state: bool
     # device: str
 ):
     """Send the model to the worker and fit the model on the worker's training data.
@@ -85,6 +86,8 @@ async def fit_model_on_worker(
         curr_round: Index of the current training round (for logging purposes).
         max_nr_batches: If > 0, training on worker will stop at min(max_nr_batches, nr_available_batches).
         lr: Learning rate of each training step.
+        dataset_key:
+        state:
 
 
     Returns:
@@ -94,6 +97,9 @@ async def fit_model_on_worker(
             * loss: Loss on last training batch, torch.tensor.
     """
     # print("The Training Round: ", curr_round)
+    if not state:
+        return worker.id, None, None, None
+
     try:
         start_time = datetime.now()
         print(f"User-{worker.id} Federated Learning start time: {start_time}")
@@ -109,6 +115,7 @@ async def fit_model_on_worker(
             optimizer_args={"lr": lr},
         )
         train_config.send(worker)
+
         # 远程训练模型；等待远程训练模型的完成
         loss = await worker.async_fit_on_device(dataset_key=dataset_key, return_ids=[0])
         model = train_config.model_ptr.get().obj
@@ -246,6 +253,7 @@ async def main():
         kwargs_websocket = {"hook": hook, "host": ip, "port": 9292, "id": ID}
         all_nodes.append(MyWebsocketClientWorker(**kwargs_websocket))
     worker_instances = all_nodes[:-1]
+    worker_states = [True for i in range(len(worker_instances))]
     testing = all_nodes[-1]
 
     for wcw in all_nodes:
@@ -272,7 +280,7 @@ async def main():
 
     learning_rate = args.lr
 
-    time_list = []
+    federated_time_list = []
     test_num = 5
 
     aggregate_policy = my_utils.AggregationPolicies([i for i in range(len(worker_instances))])
@@ -291,14 +299,15 @@ async def main():
                     curr_round=curr_round,
                     max_nr_batches=args.federate_after_n_batches,
                     lr=learning_rate,
-                    dataset_key=dataset_key
+                    dataset_key=dataset_key,
+                    state=state
                 )
-                for worker in worker_instances
+                for worker, state in zip(worker_instances, worker_states)
             ]
         )
         models = {}
         loss_values = {}
-        time_consuming = {}
+        federated_time_consuming = {}
         accuracy_dict = {}
         loss_test_values = {}
 
@@ -329,13 +338,17 @@ async def main():
             client_accuracy_list.append(accuracy_dict)
 
         # Federate models (note that this will also change the model in models[0]
-        for worker_id, worker_model, worker_loss, worker_time in results:
+        for worker_id, worker_model, worker_loss, worker_federated_time in results:
             if worker_model is not None:
                 models[worker_id] = model_to_device(worker_model, 'cpu')
                 loss_values[worker_id] = worker_loss
-                time_consuming[worker_id] = worker_time
+                federated_time_consuming[worker_id] = worker_federated_time
+            else:
+                # 删除无效节点
+                index = list(my_utils.client_device_mapping_id.values()).index(worker_id)
+                worker_states[index] = False
 
-        time_list.append(time_consuming)
+        federated_time_list.append(federated_time_consuming)
 
         # 模型聚合
         while True:
@@ -398,9 +411,9 @@ async def main():
     plt.savefig(f'{log_path}/accuracy.png')
     plt.show()
 
-    # 保存时间消耗
-    time_df = pd.DataFrame(time_list)
-    time_df.to_csv(f'{log_path}/time_consuming.csv')
+    # 保存federated learning时间消耗
+    federated_time_df = pd.DataFrame(federated_time_list)
+    federated_time_df.to_csv(f'{log_path}/federated_time_consuming.csv')
     # 保存整体准确率
     accuracy_df = pd.DataFrame(accuracy_list, index=[i * test_num for i in range(len(accuracy_list))])
     accuracy_df.to_csv(f'{log_path}/global_accuracy.csv')

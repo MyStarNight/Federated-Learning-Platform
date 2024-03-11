@@ -1,4 +1,4 @@
-# Federated Learning Platform - version 2.0
+# Federated Learning Platform - version 3.0
 
 # Background
 

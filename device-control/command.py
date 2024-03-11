@@ -117,7 +117,7 @@ if __name__ == '__main__':
         remote_folder = "/home/hao/work/fl-pj/Dataset/HAR"
 
         # 发送文件夹
-        send_folder(jetson_nanos, local_folder, remote_folder)
+        send_folder(raspberries, local_folder, remote_folder)
 
     elif operation == 'send_file':
         # 要发送的目标文件

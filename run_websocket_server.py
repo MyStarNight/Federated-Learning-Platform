@@ -157,8 +157,9 @@ if __name__ == '__main__':
         help="if set, websocket server worker will be started in verbose mode",
     )
     parser.add_argument(
-        "--n_samples",
+        "--num",
         "-n",
+        type=int,
         default=80,
         help="num of samples for one stage training"
     )
@@ -172,7 +173,7 @@ if __name__ == '__main__':
         port=args.port,
         hook=hook,
         verbose=args.verbose,
-        n_samples=args.n_samples,
+        n_samples=args.num,
         keep_users=KEEP_LABELS_DICT[worker_id],
         training=not args.testing,
     )

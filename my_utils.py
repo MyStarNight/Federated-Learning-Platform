@@ -37,7 +37,7 @@ client_device_mapping_id = {
     "192.168.3.9": "CC",
     "192.168.3.15": "DD",
     "192.168.3.16": "EE",
-    "192.168.3.17": "testing"
+    "192.168.3.25": "testing"
 }
 
 
@@ -73,12 +73,11 @@ class AggregationPolicies:
 
     def aggregate_in_order(self):
         while True:
-            worker_num = self.aggregate_worker_num_list[self.aggregate_worker_index % self.length]
             self.aggregate_worker_index += 1
+            worker_num = self.aggregate_worker_num_list[self.aggregate_worker_index % self.length]
             if worker_num is not None:
                 break
         return worker_num
-
 
 
 class ConvNet1D(nn.Module):
@@ -220,6 +219,8 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
         # 将训练好的参数加载到traced_model上
         new_model = model_to_device(model, 'cpu')
         traced_model.load_state_dict(new_model.state_dict())
+        print(loss.shape)
+        print(loss)
 
         return loss.to('cpu')
 
