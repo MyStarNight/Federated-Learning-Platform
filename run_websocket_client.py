@@ -98,7 +98,7 @@ async def fit_model_on_worker(
     """
     # print("The Training Round: ", curr_round)
     if not state:
-        return worker.id, None, None, None
+        return worker.id, None, None, None, None
 
     try:
         start_time = datetime.now()
@@ -116,21 +116,24 @@ async def fit_model_on_worker(
         )
         train_config.send(worker)
 
+        train_time_consuming_id = sy.ID_PROVIDER.pop()
         # 远程训练模型；等待远程训练模型的完成
-        loss = await worker.async_fit_on_device(dataset_key=dataset_key, return_ids=[0])
+        loss = await worker.async_fit_on_device(dataset_key=dataset_key, return_ids=[0], train_time_consuming_id=train_time_consuming_id)
         model = train_config.model_ptr.get().obj
+        train_time_consuming = train_config.owner.request_obj(train_time_consuming_id, worker)
+        # print(train_time_consuming)
         # print(type(model))
 
         end_time = datetime.now()
         print(f"User-{worker.id} Federated Learning end time: {end_time}")
         consuming_time = end_time - start_time
 
-        return worker.id, model, loss, consuming_time.total_seconds()
+        return worker.id, model, loss, consuming_time.total_seconds(), float(train_time_consuming)
 
     except Exception as e:
         print(f"User-{worker.id} {datetime.now()} Inaccessible: {e}")
         # traceback.print_exc()
-        return worker.id, None, None, None
+        return worker.id, None, None, None, None
 
 
 def evaluate_model_on_worker(
@@ -281,6 +284,7 @@ async def main():
     learning_rate = args.lr
 
     federated_time_list = []
+    train_time_list = []
     test_num = 5
 
     aggregate_policy = my_utils.AggregationPolicies([i for i in range(len(worker_instances))])
@@ -308,6 +312,7 @@ async def main():
         models = {}
         loss_values = {}
         federated_time_consuming = {}
+        train_time_consuming = {}
         accuracy_dict = {}
         loss_test_values = {}
 
@@ -316,7 +321,7 @@ async def main():
         if test_models:
             logger.info("Evaluating models")
             np.set_printoptions(formatter={"float": "{: .0f}".format})
-            for worker_id, worker_model, _, _1 in results:
+            for worker_id, worker_model, _, _1, _2 in results:
                 if worker_model is not None:
                     loss, accuracy = evaluate_model_on_worker(
                         model_identifier="Model update " + worker_id,
@@ -338,17 +343,19 @@ async def main():
             client_accuracy_list.append(accuracy_dict)
 
         # Federate models (note that this will also change the model in models[0]
-        for worker_id, worker_model, worker_loss, worker_federated_time in results:
+        for worker_id, worker_model, worker_loss, worker_federated_time, worker_train_time in results:
             if worker_model is not None:
                 models[worker_id] = model_to_device(worker_model, 'cpu')
                 loss_values[worker_id] = worker_loss
                 federated_time_consuming[worker_id] = worker_federated_time
+                train_time_consuming[worker_id] = worker_train_time
             else:
                 # 删除无效节点
                 index = list(my_utils.client_device_mapping_id.values()).index(worker_id)
                 worker_states[index] = False
 
         federated_time_list.append(federated_time_consuming)
+        train_time_list.append(train_time_consuming)
 
         # 模型聚合
         while True:
@@ -414,6 +421,9 @@ async def main():
     # 保存federated learning时间消耗
     federated_time_df = pd.DataFrame(federated_time_list)
     federated_time_df.to_csv(f'{log_path}/federated_time_consuming.csv')
+    # 保存单个设备的训练时间
+    train_time_df = pd.DataFrame(train_time_list)
+    train_time_df.to_csv(f'{log_path}/train_time_consuming.csv')
     # 保存整体准确率
     accuracy_df = pd.DataFrame(accuracy_list, index=[i * test_num for i in range(len(accuracy_list))])
     accuracy_df.to_csv(f'{log_path}/global_accuracy.csv')

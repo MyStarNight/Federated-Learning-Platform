@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import os
 
+
 def send_folder(raspberries:list, local_folder:str, remote_folder:str):
     for raspberry in raspberries:
         try:
@@ -122,10 +123,10 @@ if __name__ == '__main__':
     elif operation == 'send_file':
         # 要发送的目标文件
         local_file = r"E:\2024mem\AI-project\Federated-Learning-Platform\my_utils.py"
-        remote_folder = "/home/hao/work/fl-pj/federated-learning-platform"
+        remote_folder = "/home/pi/work/fl-pj/federated-learning-platform"
 
         # 发送文件
-        send_file(jetson_nanos, local_file, remote_folder)
+        send_file(raspberries, local_file, remote_folder)
 
     elif operation == 'command':
         # 执行命令

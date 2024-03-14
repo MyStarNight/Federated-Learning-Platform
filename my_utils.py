@@ -22,6 +22,11 @@ from datetime import datetime
 TIMEOUT_INTERVAL = 30
 
 client_device_mapping_id = {
+    "192.168.3.5": "AA",
+    "192.168.3.6": "BB",
+    "192.168.3.9": "CC",
+    "192.168.3.15": "DD",
+    "192.168.3.16": "EE",
     "192.168.3.2": "A",
     "192.168.3.3": "B",
     "192.168.3.4": "C",
@@ -32,11 +37,6 @@ client_device_mapping_id = {
     "192.168.3.12": "H",
     "192.168.3.13": "I",
     "192.168.3.20": "J",
-    "192.168.3.5": "AA",
-    "192.168.3.6": "BB",
-    "192.168.3.9": "CC",
-    "192.168.3.15": "DD",
-    "192.168.3.16": "EE",
     "192.168.3.25": "testing"
 }
 
@@ -102,7 +102,7 @@ class ConvNet1D(nn.Module):
 
 
 class MyWebsocketClientWorker(WebsocketClientWorker):
-    async def async_fit_on_device(self, dataset_key: str, return_ids: List[int] = None):
+    async def async_fit_on_device(self, dataset_key: str, train_time_consuming_id, return_ids: List[int] = None):
         if return_ids is None:
             return_ids = [sy.ID_PROVIDER.pop()]
 
@@ -113,7 +113,7 @@ class MyWebsocketClientWorker(WebsocketClientWorker):
                 self.url, timeout=TIMEOUT_INTERVAL, max_size=None, ping_timeout=TIMEOUT_INTERVAL
         ) as websocket:
             message = self.create_worker_command_message(
-                command_name="fit_on_device", return_ids=return_ids, dataset_key=dataset_key
+                command_name="fit_on_device", return_ids=return_ids, train_time_consuming_id=train_time_consuming_id, dataset_key=dataset_key
             )
 
             # Send the message and return the deserialized response.
@@ -140,6 +140,7 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
     def __init__(self, hook, host: str, port: int, id, verbose):
         super().__init__(hook=hook, host=host, port=port, id=id, verbose=verbose)
         self.aggregate_config = None
+        self.train_time_consuming = None
 
     def set_aggregate_config(self, ID: int):
         self.aggregate_config = self.get_obj(ID).obj
@@ -150,12 +151,13 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
             raise ValueError("Operation needs Aggregate object to be set.")
         print("Aggregate object is Okay.")
 
-    def fit_on_device(self, dataset_key: str, **kwargs):
+    def fit_on_device(self, dataset_key: str, train_time_consuming_id, **kwargs):
         """
         此函数可以让设备在接受到模型以后，若有cuda，可以自动调整到cuda进行运算
         Args:
             dataset_key: 训练数据集的名称
             **kwargs:
+            train_time_consuming_id:
 
         Returns:
             训练之后的loss
@@ -179,9 +181,9 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
         )
 
         return self._fit_on_device(model=model, traced_model=traced_model, dataset_key=dataset_key, loss_fn=loss_fn,
-                                   device=device)
+                                   device=device, train_time_consuming_id=train_time_consuming_id)
 
-    def _fit_on_device(self, model, traced_model, dataset_key, loss_fn, device):
+    def _fit_on_device(self, model, traced_model, dataset_key, loss_fn, device, train_time_consuming_id):
         # 训练开始时间
         start_time = datetime.now()
         print(f"Training start time: {start_time}")
@@ -214,13 +216,15 @@ class MyWebsocketServerWorker(WebsocketServerWorker):
         # 训练结束时间和消耗的时间
         end_time = datetime.now()
         print(f"Training end time: {end_time}")
-        print(f"Time Consuming: {(end_time - start_time).total_seconds()}\n")
+        train_time_consuming = (end_time - start_time).total_seconds()
+        print(f"Time Consuming: {train_time_consuming}\n")
 
         # 将训练好的参数加载到traced_model上
         new_model = model_to_device(model, 'cpu')
         traced_model.load_state_dict(new_model.state_dict())
-        print(loss.shape)
-        print(loss)
+
+        self.train_time_consuming = torch.tensor([train_time_consuming])
+        self.register_obj(self.train_time_consuming, train_time_consuming_id)
 
         return loss.to('cpu')
 
