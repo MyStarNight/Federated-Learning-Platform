@@ -32,11 +32,12 @@ Raspi 4B的CPU是Cortex-A72，而Jetson Nano的CPU是Cortex-A57。
 
 # Updating
 
-version3.0作出了以下调整：
+version3.1作出了以下调整：
 
 - 将联邦学习平台由2台IoT设备扩展到**15台IoT设备（10 raspi ， 5 nano）**
 - 聚合设备在选择时，使用的是**按照顺序依次选择设备**作为model aggregator
 - 增加了Server**掉线机制**，如果模型聚合设备掉线，会自动转移到下一个聚合设备上
+- 可以看到**设备的通信时间**
 
 Benefits：
 
