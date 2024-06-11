@@ -1,9 +1,15 @@
 import binascii
+import os.path
 from typing import Union
 from typing import List
+import torch.nn.functional as F
+import os
 
+import numpy
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
+import numpy as np
 
 import syft as sy
 from syft.generic.pointers.object_wrapper import ObjectWrapper
@@ -18,6 +24,8 @@ from syft.workers.websocket_server import WebsocketServerWorker
 import websockets
 from syft.messaging.message import ObjectRequestMessage
 from datetime import datetime
+import logging
+import time
 
 TIMEOUT_INTERVAL = 30
 
@@ -25,20 +33,102 @@ client_device_mapping_id = {
     "192.168.3.5": "AA",
     "192.168.3.6": "BB",
     "192.168.3.9": "CC",
-    "192.168.3.15": "DD",
-    "192.168.3.16": "EE",
-    "192.168.3.2": "A",
-    "192.168.3.3": "B",
-    "192.168.3.4": "C",
-    "192.168.3.7": "D",
-    "192.168.3.8": "E",
-    "192.168.3.10": "F",
-    "192.168.3.11": "G",
-    "192.168.3.12": "H",
-    "192.168.3.13": "I",
-    "192.168.3.20": "J",
-    "192.168.3.25": "testing"
+    # "192.168.3.15": "DD",
+    # "192.168.3.16": "EE",
+    # "192.168.3.2": "A",
+    # "192.168.3.3": "B",
+    # "192.168.3.4": "C",
+    # "192.168.3.7": "D",
+    # "192.168.3.8": "E",
+    # "192.168.3.10": "F",
+    # "192.168.3.11": "G",
+    # "192.168.3.12": "H",
+    # "192.168.3.13": "I",
+    # "192.168.3.20": "J",
+    # "192.168.3.17": "testing"
 }
+
+
+def set_logger(save_path, action):
+    path = os.path.join(save_path, f'{action}_{time.strftime("%Y-%m-%d_%H-%M-%S")}')
+    if not os.path.exists(path):
+        os.mkdir(path)
+    file_path = os.path.join(path, "logging.txt")
+    logging.basicConfig(
+        filename=file_path,
+        level=logging.DEBUG,
+        format="%(asctime)s | %(message)s"
+    )
+
+    logger = logging.getLogger(action)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(logging.StreamHandler())
+    return logger, path
+
+
+def read_raspi_cpu_temperature():
+    # Execute the command to get CPU temperature
+    temp_output = os.popen('vcgencmd measure_temp').readline()
+    # Extract temperature from the output
+    temp = float(temp_output.replace("temp=", "").replace("'C\n", ""))
+    return temp
+
+
+def read_nano_gpu_temperature():
+    # Path to the thermal zone corresponding to the GPU
+    thermal_zone_path = "/sys/class/thermal/thermal_zone2/temp"
+
+    try:
+        # Read the temperature from the system file
+        with open(thermal_zone_path, 'r') as file:
+            temp_str = file.read().strip()
+            # Convert the temperature from millidegrees to degrees Celsius
+            temp = float(temp_str) / 1000.0
+            return temp
+    except FileNotFoundError:
+        print("Thermal zone file not found. Ensure the path is correct for the GPU thermal zone.")
+        return None
+
+
+def plot_probability_histogram(data, save_path, bins='auto', title='Probability Histogram', xlabel='Data Points'):
+    # 计算直方图数据和bin边界
+    counts, bin_edges = np.histogram(data, bins=bins, density=True)
+    # 计算bin的宽度
+    bin_widths = np.diff(bin_edges)
+    # 计算概率
+    probabilities = counts * bin_widths
+
+    # 绘制概率直方图
+    plt.bar(bin_edges[:-1], probabilities, width=bin_widths, align='edge', edgecolor='black')
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel('Probability')
+    plt.savefig(save_path)
+    # plt.show()
+
+
+def plot_line_chart(data, save_path, title='Temperature Line Chart', xlabel='Epoch', ylabel='Temperature(°C)'):
+    # 生成数据的索引作为X轴数据
+    x_values = list(range(len(data)))
+
+    # 创建折线图
+    plt.figure(figsize=(10, 5))  # 可以调整图形大小
+    plt.plot(x_values, data, marker='o', linestyle='-', color='b')  # 折线图，带圆形标记
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+
+    # 添加网格线
+    plt.grid(True)
+    # 显示图表
+    plt.savefig(save_path)
+    # plt.show()
+
+
+
+@torch.jit.script
+def loss_fn(pred, target):
+    return F.cross_entropy(pred, target.argmax(dim=1))
 
 
 def model_to_device(model, device='cpu'):

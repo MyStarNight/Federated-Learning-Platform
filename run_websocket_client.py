@@ -25,9 +25,11 @@ LOG_INTERVAL = 25
 logger = logging.getLogger("run_websocket_client")
 # loss = nn.CrossEntropyLoss()
 
+
 @torch.jit.script
 def loss_fn(pred, target):
     return F.cross_entropy(pred, target.argmax(dim=1))
+
 
 @torch.jit.script
 def loss_fn_test(pred, target):
@@ -77,26 +79,6 @@ async def fit_model_on_worker(
     state: bool
     # device: str
 ):
-    """Send the model to the worker and fit the model on the worker's training data.
-
-    Args:
-        worker: Remote location, where the model shall be trained.
-        traced_model: Model which shall be trained.
-        batch_size: Batch size of each training step.
-        curr_round: Index of the current training round (for logging purposes).
-        max_nr_batches: If > 0, training on worker will stop at min(max_nr_batches, nr_available_batches).
-        lr: Learning rate of each training step.
-        dataset_key:
-        state:
-
-
-    Returns:
-        A tuple containing:
-            * worker_id: Union[int, str], id of the worker.
-            * improved model: torch.jit.ScriptModule, model after training at the worker.
-            * loss: Loss on last training batch, torch.tensor.
-    """
-    # print("The Training Round: ", curr_round)
     if not state:
         return worker.id, None, None, None, None
 
@@ -110,19 +92,27 @@ async def fit_model_on_worker(
             batch_size=batch_size,
             shuffle=True,
             # max_nr_batches=max_nr_batches,
-            epochs=3,
+            epochs=1,
             optimizer="SGD",
             optimizer_args={"lr": lr},
         )
+
+        print(f'User-{worker.id} model send start {datetime.now()}')
         train_config.send(worker)
+        print(f'User-{worker.id} model send end {datetime.now()}')
 
         train_time_consuming_id = sy.ID_PROVIDER.pop()
         # 远程训练模型；等待远程训练模型的完成
+
+        print(f'User-{worker.id} model start training {datetime.now()}')
         loss = await worker.async_fit_on_device(dataset_key=dataset_key, return_ids=[0], train_time_consuming_id=train_time_consuming_id)
+        print(f'User-{worker.id} model end training {datetime.now()}')
+
+        print(f'User-{worker.id}: model get back start {datetime.now()}')
         model = train_config.model_ptr.get().obj
+        print(f'User-{worker.id}: model get back end {datetime.now()}')
+
         train_time_consuming = train_config.owner.request_obj(train_time_consuming_id, worker)
-        # print(train_time_consuming)
-        # print(type(model))
 
         end_time = datetime.now()
         print(f"User-{worker.id} Federated Learning end time: {end_time}")
@@ -201,12 +191,16 @@ def aggregate(
         )
 
         # 发送模型到聚合点
+        start = datetime.now()
         aggregate_config.send_model(worker)
+        print(f'model send time: {(datetime.now() - start).total_seconds()}')
 
         # 发送训练模型的id给client
         aggregate_config_dict = aggregate_config.simplify(aggregate_config.owner, aggregate_config)
-        print(aggregate_config_dict)
+        # print(aggregate_config_dict)
+        start = datetime.now()
         ptr, ID = aggregate_config._wrap_and_send_obj(aggregate_config_dict, worker)
+        print(f'model information send time: {(datetime.now() - start).total_seconds()}')
 
         # 在远程对变量进行赋值
         worker._send_msg_and_deserialize("set_aggregate_config", ID=ID)
@@ -218,7 +212,10 @@ def aggregate(
         worker._send_msg_and_deserialize("model_aggregation")
 
         # 收回模型
+        start = datetime.now()
         model = aggregate_config.get(aggregate_config_dict['federated_model_id'], worker).obj
+        print(f'model get time: {(datetime.now() - start).total_seconds()}')
+
         new_model = model_to_device(model, 'cpu')
 
         return new_model
@@ -239,7 +236,7 @@ def visualization(input_df:pd.DataFrame, title, y_label, log_path):
         plt.ylabel(y_label)
         plt.title(f'{column}_{title}')
         plt.savefig(f'{log_path}/{column}_accuracy.png')
-        plt.show()
+        # plt.show()
 
 
 async def main():
@@ -283,7 +280,9 @@ async def main():
 
     learning_rate = args.lr
 
+    global_federated_time_list = []
     federated_time_list = []
+    model_aggregation_time_list = []
     train_time_list = []
     test_num = 5
 
@@ -293,6 +292,8 @@ async def main():
     # 开始训练
     for curr_round in range(1, args.training_rounds + 1):
         logger.info("Training round %s/%s", curr_round, args.training_rounds)
+
+        global_federated_start_time = datetime.now()
 
         results = await asyncio.gather(
             *[
@@ -309,6 +310,12 @@ async def main():
                 for worker, state in zip(worker_instances, worker_states)
             ]
         )
+
+        global_federated_end_time = datetime.now()
+        global_federated_time_consuming = (global_federated_end_time - global_federated_start_time).total_seconds()
+        global_federated_time_list.append(global_federated_time_consuming)
+        print(global_federated_time_consuming)
+
         models = {}
         loss_values = {}
         federated_time_consuming = {}
@@ -362,13 +369,20 @@ async def main():
             # print(aggregate_worker_num)
             aggregate_worker = worker_instances[aggregate_worker_num]
             print(f"Model Aggregation on device: {aggregate_worker.id}")
+            model_aggregation_start_time = datetime.now()
             traced_model = aggregate(models, aggregate_worker)
+            model_aggregation_end_time = datetime.now()
             if traced_model is not None:
                 aggregate_worker_num = aggregate_policy.aggregate_in_order()
+                model_aggregation_time_consuming = (model_aggregation_end_time - model_aggregation_start_time).total_seconds()
+                print(model_aggregation_time_consuming)
+                model_aggregation_time_list.append(model_aggregation_time_consuming)
                 break
             else:
                 aggregate_policy.delete_inaccessible_worker(aggregate_worker_num)
                 aggregate_worker_num = aggregate_policy.aggregate_in_order()
+
+        # traced_model = utils.federated_avg(models)
 
         if curr_round == args.training_rounds:
             torch.save(traced_model.state_dict(), f"model/HAR_{stage}.pt")
@@ -416,11 +430,17 @@ async def main():
 
     plt.tight_layout()
     plt.savefig(f'{log_path}/accuracy.png')
-    plt.show()
+    # plt.show()
 
     # 保存federated learning时间消耗
     federated_time_df = pd.DataFrame(federated_time_list)
     federated_time_df.to_csv(f'{log_path}/federated_time_consuming.csv')
+    # 保存整个的federated learning时间消耗
+    global_federated_time_df = pd.DataFrame(global_federated_time_list)
+    global_federated_time_df.to_csv(f'{log_path}/global_federated_time_consuming.csv')
+    # 保存模型转发的时间
+    model_aggregation_time_df = pd.DataFrame(model_aggregation_time_list)
+    model_aggregation_time_df.to_csv(f'{log_path}/model_aggregation_time_consuming.csv')
     # 保存单个设备的训练时间
     train_time_df = pd.DataFrame(train_time_list)
     train_time_df.to_csv(f'{log_path}/train_time_consuming.csv')

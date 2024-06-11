@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="215f2bad-6425-46ae-800b-f595b65adfed" name="Ubuntu-Laptop-FL4">
+        <fileTransfer rootFolder="/home/hao/work/fl-pj/Federated-Learning-Platform-4" accessType="SFTP" host="192.168.3.25" port="22" sshConfigId="68435ca6-6985-4208-8984-84fc29c3faa5" sshConfig="hao@192.168.3.25:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

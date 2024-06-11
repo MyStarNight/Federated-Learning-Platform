@@ -124,6 +124,7 @@ def start_websocket_server_worker(id, host, port, hook, verbose, n_samples, keep
     server.start()
     return server
 
+
 if __name__ == '__main__':
     # Logging setup
     FORMAT = "%(asctime)s | %(message)s"

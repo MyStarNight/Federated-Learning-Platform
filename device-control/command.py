@@ -115,14 +115,14 @@ if __name__ == '__main__':
     if operation == 'send_folder':
         # 要发送目标文件夹
         local_folder = r"E:\2024mem\AI-project\Dataset\HAR"
-        remote_folder = "/home/hao/work/fl-pj/Dataset/HAR"
+        remote_folder = "/home/pi/work/fl-pj/Dataset/HAR"
 
         # 发送文件夹
         send_folder(raspberries, local_folder, remote_folder)
 
     elif operation == 'send_file':
         # 要发送的目标文件
-        local_file = r"E:\2024mem\AI-project\Federated-Learning-Platform\my_utils.py"
+        local_file = r"E:\2024mem\AI-project\Federated-Learning-Platform\run_websocket_server.py"
         remote_folder = "/home/pi/work/fl-pj/federated-learning-platform"
 
         # 发送文件
@@ -131,7 +131,7 @@ if __name__ == '__main__':
     elif operation == 'command':
         # 执行命令
         commands_to_execute = [
-            f"mkdir /home/hao/work/fl-pj/federated-learning-platform",
+            f"mkdir /home/pi/work/fl-pj/federated-learning-platform-4/model",
         ]
-        for device in jetson_nanos:
+        for device in raspberries:
             command(device, commands_to_execute)

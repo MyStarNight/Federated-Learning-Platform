@@ -6,6 +6,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import argparse
 
+
 def main(model_path):
     data_path = '../Dataset/HAR/HAR_datasets.pkl'
     with open(data_path, 'rb') as f:
@@ -13,7 +14,7 @@ def main(model_path):
 
     selected_data = []
     selected_target = []
-    for user in [11, 12, 23]:
+    for user in [21, 22, 23, 24]:
         selected_data.append(HAR_datasets[user][:][0])
         selected_target.append(HAR_datasets[user][:][1])
 
@@ -24,7 +25,8 @@ def main(model_path):
     # model_path = "model/HAR_stage1.pt"
     model = ConvNet1D(input_size=400, num_classes=7)
     model.load_state_dict(torch.load(model_path))
-    traced_model = torch.jit.trace(model, torch.zeros([1, 400, 3], dtype=torch.float))
+    # traced_model = torch.jit.trace(model, torch.zeros([1, 400, 3], dtype=torch.float))
+    traced_model = model
     traced_model.eval()
 
     # print(model)
@@ -66,11 +68,12 @@ def main(model_path):
         accuracy = (class_correct[label] / class_total[label]) * 100 if class_total[label] != 0 else 0
         print(f'Class {label} Accuracy: {accuracy:.2f}%')
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluating models')
     parser.add_argument('--model', '-m', type=int, default=1, help="select one model for evaluating")
     args =parser.parse_args()
 
-    model_path = f'model/HAR_stage{str(args.model)}.pt'
+    model_path = f'model/local_training.pt'
     main(model_path)
 
