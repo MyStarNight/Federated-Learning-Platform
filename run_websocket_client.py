@@ -23,7 +23,6 @@ from my_utils import MyWebsocketClientWorker, model_to_device, ConvNet1D
 
 LOG_INTERVAL = 25
 logger = logging.getLogger("run_websocket_client")
-# loss = nn.CrossEntropyLoss()
 
 
 @torch.jit.script
@@ -96,26 +95,15 @@ async def fit_model_on_worker(
             optimizer="SGD",
             optimizer_args={"lr": lr},
         )
-
-        print(f'User-{worker.id} model send start {datetime.now()}')
         train_config.send(worker)
-        print(f'User-{worker.id} model send end {datetime.now()}')
 
         train_time_consuming_id = sy.ID_PROVIDER.pop()
         # 远程训练模型；等待远程训练模型的完成
 
-        print(f'User-{worker.id} model start training {datetime.now()}')
         loss = await worker.async_fit_on_device(dataset_key=dataset_key, return_ids=[0], train_time_consuming_id=train_time_consuming_id)
-        print(f'User-{worker.id} model end training {datetime.now()}')
-
-        print(f'User-{worker.id}: model get back start {datetime.now()}')
         model = train_config.model_ptr.get().obj
-        print(f'User-{worker.id}: model get back end {datetime.now()}')
-
         train_time_consuming = train_config.owner.request_obj(train_time_consuming_id, worker)
-
         end_time = datetime.now()
-        print(f"User-{worker.id} Federated Learning end time: {end_time}")
         consuming_time = end_time - start_time
 
         return worker.id, model, loss, consuming_time.total_seconds(), float(train_time_consuming)

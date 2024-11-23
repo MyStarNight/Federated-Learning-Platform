@@ -15,10 +15,10 @@ import pandas as pd
 
 # 定义argparse
 parser = argparse.ArgumentParser(description="Local Training")
-parser.add_argument("-ne","--num_epochs", type=int, default=5, help="the number of training epochs")
+parser.add_argument("-ne", "--num_epochs", type=int, default=10, help="the number of training epochs")
 parser.add_argument("-lr", "--learning_rate", type=float, default=0.001, help="learning rate")
-parser.add_argument("-tn", "--training_num", type=int, default=2, help="the number of training users")
-parser.add_argument("-d", "--device", type=str, default="nano", help="raspi or nano is Okay")
+parser.add_argument("-tn", "--training_num", type=int, default=20, help="the number of training users")
+parser.add_argument("-d", "--device", type=str, default=None, help="raspi or nano is Okay")
 args = parser.parse_args()
 
 # 定义logger，记录实验过程
@@ -28,7 +28,8 @@ logger, path = my_utils.set_logger(
     action="local_training"
 )
 
-logger.info(f"The number of epochs: {args.num_epochs}\nThe learning rate: {args.learning_rate}\nThe number of training users: {args.training_num}")
+logger.info(
+    f"The number of epochs: {args.num_epochs}\nThe learning rate: {args.learning_rate}\nThe number of training users: {args.training_num}")
 logger.info("Local Training Preparing")
 
 # 读取数据集
@@ -36,8 +37,12 @@ data_path = '../Dataset/HAR/shuffled_HAR_datasets.pkl'
 with open(data_path, 'rb') as f:
     har_datasets = pickle.load(f)
 
-train_dataset = ConcatDataset([har_datasets[i+1] for i in range(args.training_num)])
-test_dataset = ConcatDataset([har_datasets[24-i] for i in range(4)])
+all_indices = [i + 1 for i in range(24)]
+test_indices = [1, 2, 3, 4]
+train_indices = [i + 1 for i in range(24) if i + 1 not in test_indices]
+# train_indices = [i for i in range(11, 17)]
+train_dataset = ConcatDataset([har_datasets[i] for i in train_indices])
+test_dataset = ConcatDataset([har_datasets[i] for i in test_indices])
 
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
@@ -56,7 +61,7 @@ temperature_list = []
 
 # 模型训练
 logger.info("Training Start")
-for epoch in range(1, args.num_epochs+1):
+for epoch in range(1, args.num_epochs + 1):
     # 温度测试
     if args.device == "raspi":
         temperature = my_utils.read_raspi_cpu_temperature()
@@ -82,7 +87,7 @@ for epoch in range(1, args.num_epochs+1):
         optimizer.step()
 
         end = time.perf_counter()
-        consuming_time = end-start
+        consuming_time = end - start
         if batch_index == total_batches:
             continue
         consuming_time_list.append(consuming_time)
@@ -104,11 +109,12 @@ for epoch in range(1, args.num_epochs+1):
             test_total += targets.size(0)
             test_correct += (predicted == true_class).sum().item()
 
-        logger.info(f"Accuracy {100*test_correct/test_total:.2f}%")
+        logger.info(f"Accuracy {100 * test_correct / test_total:.2f}%")
 
 # 将时间保存
 consuming_time_array = np.array(consuming_time_list).reshape([args.num_epochs, total_batches - 1])
-logger.info(f"The number of epochs: {args.num_epochs}\nThe learning rate: {args.learning_rate}\nThe number of training users:{args.training_num}")
+logger.info(
+    f"The number of epochs: {args.num_epochs}\nThe learning rate: {args.learning_rate}\nThe number of training users:{args.training_num}")
 logger.info(f"Average Consuming Time for 1 Batch: {np.mean(consuming_time_array)}s")
 consuming_time_df = pd.DataFrame(consuming_time_array)
 consuming_time_df.to_csv(os.path.join(path, 'consuming_time.csv'), index=False, header=False)
